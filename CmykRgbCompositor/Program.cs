@@ -13,14 +13,61 @@ namespace CmykRgbCompositor
     {
         static void Main(string[] args)
         {
-            BitmapFrame LoadTiff(string filename)
+            LayoutLeftAndRight();
+            Overlay();
+        }
+
+        private static void Overlay()
+        {
+            // Load, validate A
+            var imageA = LoadTiff("CMYK.tif");
+            if (imageA.Format != PixelFormats.Cmyk32)
             {
-                using (var rs = File.OpenRead(filename))
+                throw new InvalidOperationException("imageA is not CMYK");
+            }
+
+            // Load, validate, convert B
+            var imageB = LoadTiff("RGBOverlay.tif");
+            if (imageB.PixelHeight != imageA.PixelHeight
+                || imageB.PixelWidth != imageA.PixelWidth)
+            {
+                throw new InvalidOperationException("Image B is not the same size as image A");
+            }
+            var imageBBGRA = new FormatConvertedBitmap(imageB, PixelFormats.Bgra32, null, 0d);
+            var imageBCmyk = new FormatConvertedBitmap(imageB, imageA.Format, null, 0d);
+
+            // Merge
+            int width = imageA.PixelWidth, height = imageA.PixelHeight;
+            var stride = width * (imageA.Format.BitsPerPixel / 8);
+            var bufferA = new uint[width * height];
+            var bufferB = new uint[width * height];
+            var maskBuffer = new uint[width * height];
+            imageA.CopyPixels(bufferA, stride, 0);
+            imageBBGRA.CopyPixels(maskBuffer, stride, 0);
+            imageBCmyk.CopyPixels(bufferB, stride, 0);
+
+            for (int i = 0; i < bufferA.Length; i++)
+            {
+                // set pixel in bufferA to the value from bufferB if mask is not white
+                if (maskBuffer[i] != 0xffffffff)
                 {
-                    return BitmapDecoder.Create(rs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+                    bufferA[i] = bufferB[i];
                 }
             }
 
+            var result = BitmapSource.Create(width, height, imageA.DpiX, imageA.DpiY, imageA.Format, null, bufferA, stride);
+
+            // save to new file
+            using (var ws = File.Create("out_overlay.tif"))
+            {
+                var tiffEncoder = new TiffBitmapEncoder();
+                tiffEncoder.Frames.Add(BitmapFrame.Create(result));
+                tiffEncoder.Save(ws);
+            }
+        }
+
+        private static void LayoutLeftAndRight()
+        {
             // Load, validate A
             var imageA = LoadTiff("CMYK.tif");
             if (imageA.Format != PixelFormats.Cmyk32)
@@ -52,6 +99,14 @@ namespace CmykRgbCompositor
                 var tiffEncoder = new TiffBitmapEncoder();
                 tiffEncoder.Frames.Add(BitmapFrame.Create(result));
                 tiffEncoder.Save(ws);
+            }
+        }
+
+        private static BitmapFrame LoadTiff(string filename)
+        {
+            using (var rs = File.OpenRead(filename))
+            {
+                return BitmapDecoder.Create(rs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
             }
         }
     }
